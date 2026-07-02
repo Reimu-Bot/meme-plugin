@@ -47,12 +47,12 @@ export const List = [
       },
       {
         icon: 63,
-        title: '#GIF拆帧/#GIF倒放/#GIF改间隔80',
+        title: '#GIF/gif拆帧/#gif倒放/#gif改间隔80',
         desc: '引用或发送 GIF 后进行帧级处理'
       },
       {
         icon: 64,
-        title: '#GIF合成80',
+        title: '#GIF/gif合成80',
         desc: '引用或发送多张图片后合成为 GIF，数字为帧间隔毫秒'
       }
     ]

@@ -25,7 +25,7 @@ export class imageOps extends plugin {
       priority: 100,
       rule: [
         {
-          reg: '^#?(图片(?:旋转|缩放|裁剪|灰度|反色|水平翻转|垂直翻转|横向拼接|纵向拼接).*|GIF(?:拆帧|合成|倒放|改间隔).*)$',
+          reg: '^#?(图片(?:旋转|缩放|裁剪|灰度|反色|水平翻转|垂直翻转|横向拼接|纵向拼接).*|[Gg][Ii][Ff](?:拆帧|合成|倒放|改间隔).*)$',
           fnc: 'imageOps'
         }
       ]
@@ -53,18 +53,20 @@ export class imageOps extends plugin {
 
   async replyResult (e, result) {
     if (result?.type === 'images') {
-      const messages = await Promise.all(result.buffers.map(async (buffer, index) => [
-        `第 ${index + 1} 帧`,
-        segment.image(await Utils.Common.getImageBase64(buffer, true))
-      ]))
+      const nodes = await Promise.all(result.buffers.map(async (buffer, index) => ({
+        message: [
+          `第 ${index + 1} 帧`,
+          segment.image(await Utils.Common.getImageBase64(buffer, true))
+        ]
+      })))
 
-      if (e.group?.makeForwardMsg) {
-        await e.reply(await e.group.makeForwardMsg(messages.flat()))
-      } else {
-        for (const message of messages.slice(0, 10)) {
-          await e.reply(message)
-        }
-      }
+      const forwardMsg = e.group?.makeForwardMsg
+        ? await e.group.makeForwardMsg(nodes)
+        : e.friend?.makeForwardMsg
+          ? await e.friend.makeForwardMsg(nodes)
+          : await Bot.makeForwardMsg(nodes)
+
+      await e.reply(forwardMsg)
       return
     }
 
