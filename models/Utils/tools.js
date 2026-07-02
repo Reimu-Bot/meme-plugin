@@ -129,11 +129,22 @@ const Tools = {
           const defText = processValue(params?.default_texts)
           const args_type = params?.args_type ?? null
 
+          // 把 args_type.parser_options 提升到 params 顶层，方便 getParams / getParamInfo 直接读取
+          // （API 实际位置是 params_type.args_type.parser_options，老版本 getParams 一直读不到）
+          const paramsForDb = params && typeof params === 'object'
+            ? {
+                ...params,
+                parser_options: Array.isArray(params?.args_type?.parser_options)
+                  ? params.args_type.parser_options
+                  : (Array.isArray(params?.parser_options) ? params.parser_options : null)
+              }
+            : params
+
           await db.meme.add(
             key,
             info,
             keyWords,
-            params,
+            paramsForDb,
             min_texts,
             max_texts,
             min_images,
@@ -289,25 +300,33 @@ const Tools = {
       return null
     }
 
+    const parsed = JSON.parse(memeParams)
     const {
       min_texts,
       max_texts,
       min_images,
       max_images,
       default_texts,
-      args_type
-    } = JSON.parse(memeParams)
+      args_type,
+      parser_options
+    } = parsed
 
-    return (
-      {
-        min_texts,
-        max_texts,
-        min_images,
-        max_images,
-        default_texts,
-        args_type
-      } || null
-    )
+    // 兼容层：API 实际返回的是 params_type = { ..., args_type: { ..., parser_options: [...] } }
+    // 老数据 / 部分库只把整坨 params_type 存到 params 字段，parser_options 实际在 args_type 里。
+    // 这里做兜底，避免 getParamInfo 拿不到 inline alias（套娃/循环等）。
+    const fallbackParserOptions =
+      parser_options ||
+      (Array.isArray(args_type?.parser_options) ? args_type.parser_options : null)
+
+    return {
+      min_texts,
+      max_texts,
+      min_images,
+      max_images,
+      default_texts,
+      args_type,
+      parser_options: fallbackParserOptions
+    }
   },
   /**
    * 获取指定表情包参数的类型
@@ -316,7 +335,7 @@ const Tools = {
    * @returns {string|null} - 返回参数的类型或 null
    */
   async getParamInfo (key) {
-    const { args_type } = await this.getParams(key)
+    const { args_type, parser_options } = await this.getParams(key)
 
     if (!args_type || !args_type.args_model) {
       return []
@@ -325,11 +344,29 @@ const Tools = {
     const argsModel = args_type.args_model
     const properties = argsModel.properties || {}
 
+    // 从 parser_options 收集 value 的中文/别名映射
+    // 结构: { direction: { "左": "left", "右": "right" }, ... }
+    const valueAliasByDest = {}
+    if (Array.isArray(parser_options)) {
+      for (const opt of parser_options) {
+        if (!opt || !opt.dest || !opt.action || opt.action.value === undefined) continue
+        if (!Array.isArray(opt.names)) continue
+        if (!valueAliasByDest[opt.dest]) valueAliasByDest[opt.dest] = {}
+        for (const name of opt.names) {
+          if (typeof name !== 'string') continue
+          if (name.startsWith('--') || name.startsWith('-')) continue
+          if (name === opt.action.value) continue
+          valueAliasByDest[opt.dest][name] = opt.action.value
+        }
+      }
+    }
+
     return Object.entries(properties)
       .filter(([ name ]) => name !== 'user_infos')
       .map(([ name, paramInfo ]) => ({
         name,
-        description: paramInfo.description || null
+        description: paramInfo.description || null,
+        valueAliases: valueAliasByDest[name] || {}
       }))
   },
 
