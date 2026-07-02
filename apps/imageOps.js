@@ -80,9 +80,22 @@ export class imageOps extends plugin {
   }
 
   async getImages (e) {
-    const images = await Utils.Common.getImage(e)
-    const forwardImages = await this.getForwardImages(e)
-    images.push(...forwardImages)
+    const messages = [ ...(e.message || []) ]
+    const source = await this.getReplyMessage(e)
+    if (source) {
+      const sourceArray = Array.isArray(source) ? source : [ source ]
+      messages.push(...sourceArray.flatMap(item => item.message || []))
+    }
+
+    const imageUrls = messages
+      .filter(message => message?.type === 'image' && message.url)
+      .map(message => message.url)
+    imageUrls.push(...await this.extractForwardImageUrls(e, messages))
+
+    const results = await Promise.allSettled([ ...new Set(imageUrls) ].map(url => Utils.Common.getImageBuffer(url)))
+    const images = results
+      .filter(result => result.status === 'fulfilled' && result.value)
+      .map(result => result.value)
 
     const users = [
       ...new Set(e.message
@@ -97,21 +110,6 @@ export class imageOps extends plugin {
     }
 
     return images
-  }
-
-  async getForwardImages (e) {
-    const messages = [ ...(e.message || []) ]
-    const source = await this.getReplyMessage(e)
-    if (source) {
-      const sourceArray = Array.isArray(source) ? source : [ source ]
-      messages.push(...sourceArray.flatMap(item => item.message || []))
-    }
-
-    const imageUrls = await this.extractForwardImageUrls(e, messages)
-    const results = await Promise.allSettled(imageUrls.map(url => Utils.Common.getImageBuffer(url)))
-    return results
-      .filter(result => result.status === 'fulfilled' && result.value)
-      .map(result => result.value)
   }
 
   async getReplyMessage (e) {
@@ -134,11 +132,16 @@ export class imageOps extends plugin {
 
       try {
         const nodes = await e.bot.getForwardMsg(resid)
+        let count = 0
         for (const node of nodes || []) {
           for (const item of node.message || []) {
-            if (item?.type === 'image' && item.url) imageUrls.push(item.url)
+            if (item?.type === 'image' && item.url) {
+              imageUrls.push(item.url)
+              count++
+            }
           }
         }
+        if (count === 0) logger.warn(`[${Version.Plugin_AliasName}] 合并转发未找到图片: ${resid}`)
       } catch (error) {
         logger.warn(`[${Version.Plugin_AliasName}] 获取合并转发图片失败: ${error.message}`)
       }
@@ -149,7 +152,13 @@ export class imageOps extends plugin {
 
   getForwardResid (message) {
     if (message.id) return message.id
-    const match = String(message.data || '').match(/m_resid="([\w/+]+)"/)
+    if (message.data?.id) return message.data.id
+    if (message.data?.resid) return message.data.resid
+
+    const data = typeof message.data === 'string'
+      ? message.data
+      : JSON.stringify(message.data || '')
+    const match = data.match(/m_resid=["']([\w/+]+)["']/) || data.match(/resid["']?\s*[:=]\s*["']([\w/+]+)["']/)
     return match?.[1] || null
   }
 
