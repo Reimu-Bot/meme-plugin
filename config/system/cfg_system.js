@@ -93,6 +93,47 @@ const cfgSchema = {
       }
     }
   },
+  imageOps: {
+    title: '图片操作设置',
+    cfg: {
+      enable: {
+        title: '图片操作',
+        desc: '是否开启图片操作功能',
+        type: 'boolean',
+        def: true
+      },
+      maxImages: {
+        title: '最大图片数',
+        desc: '单次最多处理图片数量',
+        type: 'number',
+        def: 9
+      },
+      maxInputPixels: {
+        title: '输入像素限制',
+        desc: '单张输入图片最大像素数',
+        type: 'number',
+        def: 16000000
+      },
+      maxOutputBytes: {
+        title: '输出体积限制',
+        desc: '输出图片最大体积，单位 Byte',
+        type: 'number',
+        def: 10485760
+      },
+      maxGifFrames: {
+        title: 'GIF 帧数限制',
+        desc: 'GIF 最大处理帧数',
+        type: 'number',
+        def: 80
+      },
+      defaultGifDelay: {
+        title: 'GIF 默认间隔',
+        desc: 'GIF 合成/改间隔默认帧间隔，单位毫秒',
+        type: 'number',
+        def: 80
+      }
+    }
+  },
   access: {
     title: '名单设置',
     cfg: {

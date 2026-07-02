@@ -1,0 +1,17 @@
+# 是否开启图片操作
+enable: true
+
+# 单次最多处理图片数量
+maxImages: 9
+
+# 单张输入图片最大像素数
+maxInputPixels: 16000000
+
+# 输出图片最大体积，单位 Byte，默认 10MB
+maxOutputBytes: 10485760
+
+# GIF 最大处理帧数
+maxGifFrames: 80
+
+# GIF 合成/改间隔默认帧间隔，单位毫秒
+defaultGifDelay: 80
