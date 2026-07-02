@@ -33,27 +33,37 @@ export const List = [
       {
         icon: 60,
         title: '#图片旋转90/#图片缩放512x512',
-        desc: '引用或发送图片后进行旋转、缩放、裁剪'
+        desc: '引用或发送图片后进行旋转、缩放、坐标裁剪'
       },
       {
         icon: 61,
+        title: '#裁剪3x4 边距10',
+        desc: '按行列网格切图，支持边距上/下/左/右'
+      },
+      {
+        icon: 62,
         title: '#图片灰度/#图片反色/#图片水平翻转',
         desc: '引用或发送图片后进行基础图片处理'
       },
       {
-        icon: 62,
+        icon: 63,
         title: '#图片横向拼接/#图片纵向拼接',
         desc: '引用或发送多张图片后进行拼接'
       },
       {
-        icon: 63,
-        title: '#GIF/gif拆帧/#gif倒放/#gif改间隔80',
+        icon: 64,
+        title: '#GIF/gif拆帧/#gif分解/#gif倒放',
         desc: '引用或发送 GIF 后进行帧级处理'
       },
       {
-        icon: 64,
-        title: '#GIF/gif合成80',
-        desc: '引用或发送多张图片后合成为 GIF，数字为帧间隔毫秒'
+        icon: 65,
+        title: '#合成1gif8x8 0.05s/#合成2gif8x8',
+        desc: '精灵图按行列切帧后合成为 GIF'
+      },
+      {
+        icon: 66,
+        title: '#多图合成gif 10fps/#gif合成80',
+        desc: '引用或发送多张图片后合成为 GIF'
       }
     ]
   },

@@ -48,8 +48,61 @@ const parseCrop = (text) => {
   return { left, top, width, height }
 }
 
+const parseMargins = (text = '') => {
+  const margins = { top: 0, bottom: 0, left: 0, right: 0 }
+  const cleanText = String(text).replace(/边距\s*([上下左右])?边?\s*(\d+)/g, (full, direction, amountText) => {
+    const amount = Number(amountText)
+    if (!Number.isInteger(amount) || amount < 0) return ' '
+
+    if (!direction) {
+      margins.top += amount
+      margins.bottom += amount
+      margins.left += amount
+      margins.right += amount
+    } else if (direction === '上') margins.top += amount
+    else if (direction === '下') margins.bottom += amount
+    else if (direction === '左') margins.left += amount
+    else if (direction === '右') margins.right += amount
+    return ' '
+  })
+
+  return { cleanText, margins }
+}
+
+const parseGrid = (text, defaults = { rows: 1, cols: 1 }) => {
+  const match = String(text || '').match(/(\d{1,2})\s*[xX*×]\s*(\d{1,2})/)
+  const rows = match ? Number(match[1]) : defaults.rows
+  const cols = match ? Number(match[2]) : defaults.cols
+  validatePositive(rows, '行数')
+  validatePositive(cols, '列数')
+  if (rows > 20 || cols > 20) throw new Error('行列数过大，最大支持 20x20')
+  return { rows, cols }
+}
+
 const parseDelayCentisecs = (text) => {
-  const match = String(text || '').match(/\d+/)
+  const rawText = String(text || '')
+  const fpsMatch = rawText.match(/(\d+(?:\.\d+)?)\s*fps/i)
+  if (fpsMatch) {
+    const fps = Number(fpsMatch[1])
+    if (!Number.isFinite(fps) || fps <= 0 || fps > 100) throw new Error('FPS 必须是 0 到 100 之间的数字')
+    return Math.max(1, Math.round(100 / fps))
+  }
+
+  const secondMatch = rawText.match(/(\d+(?:\.\d+)?)\s*s/i)
+  if (secondMatch) {
+    const seconds = Number(secondMatch[1])
+    if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 60) throw new Error('GIF 间隔秒数必须是 0 到 60 之间的数字')
+    return Math.max(1, Math.round(seconds * 100))
+  }
+
+  const decimalMatch = rawText.match(/\d+\.\d+/)
+  if (decimalMatch) {
+    const seconds = Number(decimalMatch[0])
+    if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 60) throw new Error('GIF 间隔秒数必须是 0 到 60 之间的数字')
+    return Math.max(1, Math.round(seconds * 100))
+  }
+
+  const match = rawText.match(/\d+/)
   const delay = match ? Number(match[0]) : getConfig().defaultGifDelay
   if (!Number.isInteger(delay) || delay < 10 || delay > 655350) {
     throw new Error('GIF 间隔必须是 10 到 655350 毫秒之间的整数')
@@ -98,6 +151,45 @@ const ensureGifFrameCount = (frames) => {
   }
 }
 
+const trimMargins = async (image, margins) => {
+  const metadata = await metadataOf(image)
+  const width = metadata.width || 0
+  const height = metadata.height || 0
+  if (!width || !height) throw new Error('无法读取图片尺寸')
+
+  const left = margins.left
+  const top = margins.top
+  const right = width - margins.right
+  const bottom = height - margins.bottom
+  if (left >= right || top >= bottom) throw new Error(`边距无效：${width}x${height}`)
+
+  if (Object.values(margins).every(value => value === 0)) return image
+  return await sharp(image).extract({ left, top, width: right - left, height: bottom - top }).png().toBuffer()
+}
+
+const imageToRaw = async (image, options = {}) => {
+  const { data, info } = await sharp(image, { animated: false })
+    .resize(options.resize)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true })
+  return { data, width: info.width, height: info.height }
+}
+
+const rawToGifFrame = ({ data, width, height }, delayCentisecs, mode = 1) => {
+  const buffer = Buffer.from(data)
+  if (mode === 2) {
+    for (let index = 0; index < buffer.length; index += 4) {
+      buffer[index + 3] = buffer[index + 3] < 128 ? 0 : 255
+    }
+  }
+
+  return new GifFrame(width, height, buffer, {
+    delayCentisecs,
+    disposalMethod: GifFrame.DisposeToBackgroundColor
+  })
+}
+
 const compositeImages = async (images, direction) => {
   const normalized = normalizeImages(images, 2)
   const items = await Promise.all(normalized.map(async (input) => {
@@ -144,13 +236,10 @@ const readGif = async (images) => {
   return gif
 }
 
-const encodeGif = async (frames, loops = 0) => {
+const encodeGif = async (frames, loops = 0, colorScope = Gif.LocalColorsOnly) => {
   ensureGifFrameCount(frames)
   GifUtil.quantizeWu(frames, 256)
-  const gif = await new GifCodec().encodeGif(frames, {
-    loops,
-    colorScope: Gif.LocalColorsOnly
-  })
+  const gif = await new GifCodec().encodeGif(frames, { loops, colorScope })
   return ensureOutputSize(gif.buffer)
 }
 
@@ -178,19 +267,106 @@ const frameToPng = async (frame, width, height) => {
 }
 
 const imageToGifFrame = async (image, width, height, delayCentisecs) => {
-  const { data, info } = await sharp(image)
-    .resize(width, height, {
+  const raw = await imageToRaw(image, {
+    resize: {
+      width,
+      height,
       fit: 'contain',
       background: { r: 255, g: 255, b: 255, alpha: 0 }
-    })
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true })
-
-  return new GifFrame(info.width, info.height, data, {
-    delayCentisecs,
-    disposalMethod: GifFrame.DisposeToBackgroundColor
+    }
   })
+  return rawToGifFrame(raw, delayCentisecs)
+}
+
+const imageToCenteredGifFrame = async (image, width, height, delayCentisecs) => {
+  const input = await sharp(image, { animated: false }).ensureAlpha().toBuffer()
+  const metadata = await metadataOf(input)
+  if (!metadata.width || !metadata.height) throw new Error('无法读取图片尺寸')
+
+  const scale = Math.min(width / metadata.width, height / metadata.height)
+  const resizedWidth = Math.max(1, Math.round(metadata.width * scale))
+  const resizedHeight = Math.max(1, Math.round(metadata.height * scale))
+  const resized = await sharp(input)
+    .resize(resizedWidth, resizedHeight, { fit: 'fill' })
+    .png()
+    .toBuffer()
+
+  const raw = await sharp({
+    create: {
+      width,
+      height,
+      channels: 4,
+      background: { r: 255, g: 255, b: 255, alpha: 0 }
+    }
+  }).composite([
+    {
+      input: resized,
+      left: Math.floor((width - resizedWidth) / 2),
+      top: Math.floor((height - resizedHeight) / 2)
+    }
+  ]).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+
+  return rawToGifFrame({ data: raw.data, width: raw.info.width, height: raw.info.height }, delayCentisecs)
+}
+
+const cropGridBuffers = async (image, text) => {
+  const { cleanText, margins } = parseMargins(text)
+  const { rows, cols } = parseGrid(cleanText)
+  const trimmed = await trimMargins(image, margins)
+  const metadata = await metadataOf(trimmed)
+  const width = metadata.width || 0
+  const height = metadata.height || 0
+  const cellWidth = Math.floor(width / cols)
+  const cellHeight = Math.floor(height / rows)
+  if (cellWidth < 1 || cellHeight < 1) throw new Error(`图片太小：${width}x${height}`)
+
+  const buffers = []
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      buffers.push(ensureOutputSize(await sharp(trimmed)
+        .extract({
+          left: col * cellWidth,
+          top: row * cellHeight,
+          width: cellWidth,
+          height: cellHeight
+        })
+        .png()
+        .toBuffer()))
+    }
+  }
+  return { buffers, rows, cols }
+}
+
+const spriteGif = async (images, text, mode = 1) => {
+  const [image] = normalizeImages(images)
+  const { cleanText, margins } = parseMargins(text)
+  const { rows, cols } = parseGrid(cleanText, { rows: 6, cols: 6 })
+  const delayCentisecs = parseDelayCentisecs(cleanText)
+  const trimmed = await trimMargins(image, margins)
+  const metadata = await metadataOf(trimmed)
+  const width = metadata.width || 0
+  const height = metadata.height || 0
+  const cellWidth = Math.floor(width / cols)
+  const cellHeight = Math.floor(height / rows)
+  if (cellWidth < 2 || cellHeight < 2) throw new Error(`单格太小：${cellWidth}x${cellHeight}`)
+
+  const frames = []
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const buffer = await sharp(trimmed)
+        .extract({
+          left: col * cellWidth,
+          top: row * cellHeight,
+          width: cellWidth,
+          height: cellHeight
+        })
+        .png()
+        .toBuffer()
+      frames.push(rawToGifFrame(await imageToRaw(buffer), delayCentisecs, mode))
+    }
+  }
+
+  return await encodeGif(frames, 0, mode === 2 ? Gif.GlobalColorsPreferred : Gif.LocalColorsOnly)
 }
 
 export const ImageOps = {
@@ -212,6 +388,13 @@ export const ImageOps = {
     const [image] = normalizeImages(images)
     const area = parseCrop(text)
     return await toBuffer(createSharp(image).extract(area))
+  },
+
+  async cropGrid (images, text) {
+    ensureEnabled()
+    const [image] = normalizeImages(images)
+    const result = await cropGridBuffers(image, text)
+    return { type: 'images', buffers: result.buffers, label: `裁剪 ${result.rows}x${result.cols}` }
   },
 
   async grayscale (images) {
@@ -252,20 +435,35 @@ export const ImageOps = {
     ensureEnabled()
     const gif = await readGif(images)
     const buffers = await Promise.all(gif.frames.map(frame => frameToPng(frame, gif.width, gif.height)))
-    return { type: 'images', buffers }
+    return { type: 'images', buffers, label: 'GIF拆帧' }
   },
 
   async gifMerge (images, text) {
     ensureEnabled()
     const normalized = normalizeImages(images, 2)
     const delayCentisecs = parseDelayCentisecs(text)
-    const firstMetadata = await metadataOf(normalized[0])
-    const width = firstMetadata.width || 0
-    const height = firstMetadata.height || 0
+    const metadataList = await Promise.all(normalized.map(metadataOf))
+    const width = Math.max(...metadataList.map(metadata => metadata.width || 0))
+    const height = Math.max(...metadataList.map(metadata => metadata.height || 0))
     if (!width || !height) throw new Error('无法读取图片尺寸')
 
-    const frames = await Promise.all(normalized.map(image => imageToGifFrame(image, width, height, delayCentisecs)))
+    const frames = await Promise.all(normalized.map(image => imageToCenteredGifFrame(image, width, height, delayCentisecs)))
     return await encodeGif(frames)
+  },
+
+  async spriteGif (images, text) {
+    ensureEnabled()
+    return await spriteGif(images, text, 1)
+  },
+
+  async spriteGifMode1 (images, text) {
+    ensureEnabled()
+    return await spriteGif(images, text, 1)
+  },
+
+  async spriteGifMode2 (images, text) {
+    ensureEnabled()
+    return await spriteGif(images, text, 2)
   },
 
   async gifReverse (images) {
