@@ -52,7 +52,7 @@ export const List = [
       },
       {
         icon: 64,
-        title: '#GIF/gif拆帧/#gif分解/#gif倒放',
+        title: '#GIF/gif拆帧/#gif倒放/#gif回弹',
         desc: '引用或发送 GIF 后进行帧级处理'
       },
       {

@@ -20,6 +20,8 @@ const OPERATION_MAP = [
   { pattern: /^合成1GIF\s*(.+)?$/i, fnc: 'spriteGifMode1', getArgs: match => match[1] },
   { pattern: /^合成2GIF\s*(.+)?$/i, fnc: 'spriteGifMode2', getArgs: match => match[1] },
   { pattern: /^GIF倒放$/i, fnc: 'gifReverse' },
+  { pattern: /^倒放$/i, fnc: 'gifReverse' },
+  { pattern: /^GIF(?:回弹|正放倒放)$/i, fnc: 'gifRebound' },
   { pattern: /^GIF改间隔\s*(.+)?$/i, fnc: 'gifChangeDuration', getArgs: match => match[1] }
 ]
 
@@ -31,7 +33,7 @@ export class imageOps extends plugin {
       priority: 100,
       rule: [
         {
-          reg: '^#?(?:图片(?:旋转|缩放|裁剪|灰度|反色|水平翻转|垂直翻转|横向拼接|纵向拼接).*|裁剪.*|[Gg][Ii][Ff](?:拆帧|分解|合成|倒放|改间隔).*|多图合成[Gg][Ii][Ff].*|合成[12]?[Gg][Ii][Ff].*)$',
+          reg: '^#?(?:图片(?:旋转|缩放|裁剪|灰度|反色|水平翻转|垂直翻转|横向拼接|纵向拼接).*|裁剪.*|倒放|[Gg][Ii][Ff](?:拆帧|分解|合成|倒放|回弹|正放倒放|改间隔).*|多图合成[Gg][Ii][Ff].*|合成[12]?[Gg][Ii][Ff].*)$',
           fnc: 'imageOps'
         }
       ]
@@ -39,7 +41,10 @@ export class imageOps extends plugin {
   }
 
   async imageOps (e) {
-    if (Config.imageOps && !Config.imageOps.enable) return false
+    if (Config.imageOps && !Config.imageOps.enable) {
+      await e.reply(`[${Version.Plugin_AliasName}] 图片操作功能已关闭`)
+      return true
+    }
 
     const message = this.cleanMessage(e.msg)
     const operation = this.getOperation(message)
@@ -47,13 +52,18 @@ export class imageOps extends plugin {
 
     try {
       const images = await this.getImages(e)
+      if (!images.length) {
+        const target = operation.fnc.startsWith('gif') ? 'GIF' : '图片'
+        await e.reply(`[${Version.Plugin_AliasName}] 未找到${target}，请和命令一起发送，或回复${target}后发送 #${message}`)
+        return true
+      }
       const result = await ImageOps.ImageOps[operation.fnc](images, operation.args)
       await this.replyResult(e, result)
       return true
     } catch (error) {
       logger.error(`[${Version.Plugin_AliasName}] 图片操作失败: ${error.message}`)
-      if (Config.meme.errorReply) await e.reply(`[${Version.Plugin_AliasName}] 图片操作失败, 错误信息: ${error.message}`)
-      return false
+      await e.reply(`[${Version.Plugin_AliasName}] 图片操作失败, 错误信息: ${error.message}`)
+      return true
     }
   }
 

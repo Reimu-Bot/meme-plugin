@@ -131,6 +131,12 @@ const cfgSchema = {
         desc: 'GIF 合成/改间隔默认帧间隔，单位毫秒',
         type: 'number',
         def: 80
+      },
+      ffmpegPath: {
+        title: 'FFmpeg 路径',
+        desc: 'ffmpeg 可执行文件路径，留空使用系统 PATH 或 FFMPEG_PATH',
+        type: 'text',
+        def: ''
       }
     }
   },

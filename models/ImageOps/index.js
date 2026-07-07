@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 
 import sharp from 'sharp'
@@ -13,7 +14,8 @@ const DEFAULT_CONFIG = {
   maxInputPixels: 16000000,
   maxOutputBytes: 10485760,
   maxGifFrames: 80,
-  defaultGifDelay: 80
+  defaultGifDelay: 80,
+  ffmpegPath: ''
 }
 
 const getConfig = () => ({ ...DEFAULT_CONFIG, ...(Config.imageOps || {}) })
@@ -133,6 +135,86 @@ const createSharp = (buffer) => {
     limitInputPixels: maxInputPixels > 0 ? maxInputPixels : false
   })
 }
+
+const ensureGif = (image) => {
+  if (!Buffer.isBuffer(image) || !image.subarray(0, 6).toString('ascii').startsWith('GIF')) {
+    throw new Error('请发送或引用 GIF')
+  }
+}
+
+const runFfmpegGif = (image, filter) => new Promise((resolve, reject) => {
+  const command = getConfig().ffmpegPath || process.env.FFMPEG_PATH || 'ffmpeg'
+  const args = [
+    '-hide_banner',
+    '-loglevel', 'error',
+    '-i', 'pipe:0',
+    '-filter_complex', filter,
+    '-map', '[out]',
+    '-loop', '0',
+    '-f', 'gif',
+    'pipe:1'
+  ]
+  const chunks = []
+  let outputSize = 0
+  let stderr = ''
+  let settled = false
+  let timedOut = false
+  const child = spawn(command, args, { windowsHide: true })
+  const timer = setTimeout(() => {
+    timedOut = true
+    child.kill()
+  }, 60000)
+
+  child.stdin.on('error', () => {})
+  child.stdout.on('data', (chunk) => {
+    const { maxOutputBytes } = getConfig()
+    outputSize += chunk.length
+    if (maxOutputBytes > 0 && outputSize > maxOutputBytes) {
+      child.kill()
+      if (!settled) {
+        settled = true
+        reject(new Error(`处理后图片过大，已超过 ${Math.round(maxOutputBytes / 1024 / 1024)}MB`))
+      }
+      return
+    }
+    chunks.push(chunk)
+  })
+  child.stderr.on('data', chunk => { stderr += chunk.toString() })
+  child.on('error', (error) => {
+    clearTimeout(timer)
+    if (settled) return
+    settled = true
+    if (error.code === 'ENOENT') {
+      reject(new Error('未找到 ffmpeg，请先安装 ffmpeg 或配置 imageOps.ffmpegPath/FFMPEG_PATH'))
+      return
+    }
+    reject(error)
+  })
+  child.on('close', (code) => {
+    clearTimeout(timer)
+    if (settled) return
+    settled = true
+    if (timedOut) {
+      reject(new Error('ffmpeg 执行超时'))
+      return
+    }
+    if (code !== 0) {
+      const detail = stderr.trim()
+      reject(new Error(detail ? `ffmpeg 执行失败: ${detail}` : 'ffmpeg 执行失败'))
+      return
+    }
+    const buffer = Buffer.concat(chunks)
+    if (!buffer.length) {
+      reject(new Error('ffmpeg 未生成 GIF'))
+      return
+    }
+    resolve(ensureOutputSize(buffer))
+  })
+  child.stdin.end(image)
+})
+
+const gifPalette = (filter) =>
+  `${filter},split[s0][s1];[s0]palettegen=stats_mode=full:reserve_transparent=on[p];[s1][p]paletteuse=new=1:dither=none[out]`
 
 const toBuffer = async (image) => ensureOutputSize(await image.toBuffer())
 
@@ -468,9 +550,16 @@ export const ImageOps = {
 
   async gifReverse (images) {
     ensureEnabled()
-    const gif = await readGif(images)
-    const frames = GifUtil.cloneFrames(gif.frames).reverse()
-    return await encodeGif(frames, gif.loops)
+    const [image] = normalizeImages(images)
+    ensureGif(image)
+    return await runFfmpegGif(image, gifPalette('reverse'))
+  },
+
+  async gifRebound (images) {
+    ensureEnabled()
+    const [image] = normalizeImages(images)
+    ensureGif(image)
+    return await runFfmpegGif(image, gifPalette('[0:v]split[main][back];[back]reverse[reversed];[main][reversed]concat=n=2:v=1:a=0'))
   },
 
   async gifChangeDuration (images, text) {
