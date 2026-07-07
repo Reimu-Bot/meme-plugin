@@ -107,12 +107,14 @@ export class imageOps extends plugin {
       .filter(result => result.status === 'fulfilled' && result.value)
       .map(result => result.value)
 
-    const users = [
-      ...new Set(e.message
-        .filter(message => message?.type === 'at')
-        .map(message => message?.qq?.toString())
-        .filter(Boolean))
-    ]
+    const users = e.reply_id || e.source
+      ? []
+      : [
+          ...new Set((e.message || [])
+            .filter(message => message?.type === 'at')
+            .map(message => message?.qq?.toString())
+            .filter(Boolean))
+        ]
 
     if (users.length > 0) {
       const avatars = await Utils.Common.getAvatar(e, users)
