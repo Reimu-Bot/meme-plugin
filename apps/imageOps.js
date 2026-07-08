@@ -107,7 +107,7 @@ export class imageOps extends plugin {
       .filter(result => result.status === 'fulfilled' && result.value)
       .map(result => result.value)
 
-    const users = e.reply_id || e.source
+    const users = imageUrls.length > 0
       ? []
       : [
           ...new Set((e.message || [])
@@ -134,26 +134,28 @@ export class imageOps extends plugin {
     return null
   }
 
-  async extractForwardImageUrls (e, messages) {
+  async extractForwardImageUrls (e, messages, visited = new Set()) {
     const imageUrls = []
-    const forwardMessages = messages.filter(message => message?.type === 'xml' || message?.type === 'forward')
+    const forwardMessages = messages.filter(message => this.getForwardResid(message))
 
     for (const message of forwardMessages) {
       const resid = this.getForwardResid(message)
       if (!resid || !e.bot?.getForwardMsg) continue
+      if (visited.has(resid)) continue
+      visited.add(resid)
 
       try {
         const nodes = await e.bot.getForwardMsg(resid)
-        let count = 0
+        const nodeMessages = []
         for (const node of nodes || []) {
-          for (const item of node.message || []) {
-            if (item?.type === 'image' && item.url) {
-              imageUrls.push(item.url)
-              count++
-            }
-          }
+          const content = node.message || node.content || []
+          nodeMessages.push(...(Array.isArray(content) ? content : [ content ]))
         }
-        if (count === 0) logger.warn(`[${Version.Plugin_AliasName}] 合并转发未找到图片: ${resid}`)
+        imageUrls.push(...nodeMessages
+          .filter(item => item?.type === 'image' && item.url)
+          .map(item => item.url))
+        imageUrls.push(...await this.extractForwardImageUrls(e, nodeMessages, visited))
+        if (imageUrls.length === 0) logger.warn(`[${Version.Plugin_AliasName}] 合并转发未找到图片: ${resid}`)
       } catch (error) {
         logger.warn(`[${Version.Plugin_AliasName}] 获取合并转发图片失败: ${error.message}`)
       }
@@ -166,12 +168,36 @@ export class imageOps extends plugin {
     if (message.id) return message.id
     if (message.data?.id) return message.data.id
     if (message.data?.resid) return message.data.resid
+    if (message.data?.m_resid) return message.data.m_resid
+
+    const dataObject = typeof message.data === 'object' ? message.data : this.parseJson(message.data)
+    const resid = this.findForwardValue(dataObject, [ 'm_resid', 'resid' ])
+    if (resid) return resid
 
     const data = typeof message.data === 'string'
       ? message.data
       : JSON.stringify(message.data || '')
-    const match = data.match(/m_resid=["']([\w/+]+)["']/) || data.match(/resid["']?\s*[:=]\s*["']([\w/+]+)["']/)
+    const match = data.match(/m_resid=["']([\w/+.-]+)["']/) || data.match(/resid["']?\s*[:=]\s*["']([\w/+.-]+)["']/)
     return match?.[1] || null
+  }
+
+  parseJson (data) {
+    if (typeof data !== 'string') return null
+    try {
+      return JSON.parse(data)
+    } catch {
+      return null
+    }
+  }
+
+  findForwardValue (data, keys) {
+    if (!data || typeof data !== 'object') return null
+    for (const [ key, value ] of Object.entries(data)) {
+      if (keys.includes(key) && (typeof value === 'string' || typeof value === 'number')) return String(value)
+      const result = this.findForwardValue(value, keys)
+      if (result) return result
+    }
+    return null
   }
 
   cleanMessage (message = '') {
